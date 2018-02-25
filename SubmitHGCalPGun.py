@@ -41,7 +41,7 @@ def parseOptions():
     parser.add_option('-l', '--local',  action='store_true', dest='LOCAL',  default=False, help='store output dir locally instead of at EOS CMG area, default is False.')
     parser.add_option('-y', '--dry-run', action='store_true', dest='DRYRUN', default=False, help='perform a dry run (no jobs are lauched).')
     parser.add_option('', '--eosArea', dest='eosArea', type='string', default='/eos/cms/store/cmst3/group/hgcal/CMG_studies/Production', help='path to the eos area where the output jobs will be staged out')
-    parser.add_option('-d', '--datTier', dest='DTIER',  type='string', default='GSD', help='data tier to run: "GSD" (GEN-SIM-DIGI) or "RECO", default is "GSD"')
+    parser.add_option('-d', '--datTier', dest='DTIER',  type='string', default='GSD', help='data tier to run: "GSD" (GEN-SIM-DIGI), "RECO", "NTUP" or "GRN" (GSD, RECO, NTUP in series) default is "GSD"')
     parser.add_option('-i', '--inDir',  dest='inDir',  type='string', default='',   help='name of the previous stage dir (relative to the local submission or "eosArea"), to be used as the input for next stage, not applicable for GEN stage')
     parser.add_option('-r', '--RelVal',  dest='RELVAL',  type='string', default='',   help='name of relval reco dataset to be ntuplized (currently implemented only for NTUP data Tier')
     parser.add_option('', '--noReClust',  action='store_false', dest='RECLUST',  default=True, help='do not re-run RECO-level clustering at NTUP step, default is True (do re-run the clustering).')
@@ -54,7 +54,7 @@ def parseOptions():
     (opt, args) = parser.parse_args()
 
     # sanity check for data tiers
-    dataTiers = ['GSD', 'RECO', 'NTUP']
+    dataTiers = ['GSD', 'RECO', 'NTUP', 'GRN']
     if opt.DTIER not in dataTiers:
         parser.error('Data tier ' + opt.DTIER + ' is not supported. Exiting...')
         sys.exit()
@@ -79,7 +79,7 @@ def parseOptions():
         opt.CONFIGFILE = 'templates/partGun_'+opt.DTIER+'_template.py'
 
     # supported queues with the recommended number of events per hour (e.g. ~4events/1nh for GSD, ~8events/1nh for RECO) + sanity check
-    eventsPerHour = {'GSD':4, 'RECO':8, 'NTUP':100}
+    eventsPerHour = {'GSD':4, 'RECO':8, 'NTUP':100, 'GRN': 4}
     queues_evtsperjob = {'1nw':(7*24*eventsPerHour[opt.DTIER]), '2nd':(2*24*eventsPerHour[opt.DTIER]), '1nd':(1*24*eventsPerHour[opt.DTIER]), '8nh':(8*eventsPerHour[opt.DTIER]), '1nh':(1*eventsPerHour[opt.DTIER]), '8nm':(1)}
     if opt.QUEUE not in queues_evtsperjob.keys():
         parser.error('Queue ' + opt.QUEUE + ' is not supported. Exiting...')
@@ -132,11 +132,17 @@ def processCmd(cmd, quite = 0):
 
 ### print the setup
 def printSetup(CMSSW_BASE, CMSSW_VERSION, SCRAM_ARCH, currentDir, outDir):
+    display_tier = opt.DTIER
+    if opt.DTIER == 'GSD':
+        display_tier = 'GEN-SIM-DIGI'
+    elif  opt.DTIER == 'GRN':
+        display_tier = 'GEN-SIM-DIGI -> RECO -> NTUP'
+
     global opt, particles
     print '--------------------'
     print '[Run parameters]'
     print '--------------------'
-    print 'DATA TIER:  ', [opt.DTIER, 'GEN-SIM-DIGI'][int(opt.DTIER=='GSD')]
+    print 'DATA TIER:  ', display_tier
     print 'CMSSW BASE: ', CMSSW_BASE
     print 'CMSSW VER:  ', CMSSW_VERSION,'[', SCRAM_ARCH, ']'
     print 'CONFIGFILE: ', opt.CONFIGFILE
@@ -148,12 +154,12 @@ def printSetup(CMSSW_BASE, CMSSW_VERSION, SCRAM_ARCH, currentDir, outDir):
     print 'PU:         ',opt.PU
     print 'PU dataset: ',opt.PUDS
     print 'INPUTS:     ', [curr_input, 'Particle gun mode: ' + opt.gunMode + ', type: ' + opt.gunType + ', PDG ID '+str(opt.PARTID)+', '+str(opt.NPART)+' times per event, ' + opt.gunType + ' threshold in ['+str(opt.thresholdMin)+','+str(opt.thresholdMax)+'], eta threshold in ['+str(opt.etaMin)+','+str(opt.etaMax)+']',opt.RELVAL][int(opt.DTIER=='GSD')]
-    if (opt.InConeID!='' and opt.DTIER=='GSD'):
+    if (opt.InConeID!='' and (opt.DTIER=='GSD' or opt.DTIER=='GRN') ):
         print '             IN-CONE: PDG ID '+str(opt.InConeID)+', deltaR in ['+str(opt.MinDeltaR)+ ','+str(opt.MaxDeltaR)+']'+', momentum ratio in ['+str(opt.MinMomRatio)+ ','+str(opt.MaxMomRatio)+']'
     print 'STORE AREA: ', [opt.eosArea, currentDir][int(opt.LOCAL)]
     print 'OUTPUT DIR: ', outDir
     print 'QUEUE:      ', opt.QUEUE
-    print ['NUM. EVTS:   '+str(opt.NEVTS), ''][int(opt.DTIER!='GSD')]
+    print 'NUM. EVTS:   '+str(opt.NEVTS) if opt.DTIER == 'GSD' else opt.DTIER == 'GRN'
     print '--------------------'
 
 ### prepare the list of input GSD files for RECO stage
@@ -258,7 +264,7 @@ process.mix.maxBunch = cms.int32(3)
 
     # prepare tag, prepare/check out dirs
     tag = "_".join([opt.TAG, time.strftime("%Y%m%d")])
-    if (opt.DTIER == 'GSD'):
+    if (opt.DTIER == 'GSD' or opt.DTIER == 'GRN'):
         outDir = "_".join([partGunType, tag])
         if (not os.path.isdir(outDir)):
             processCmd('mkdir -p '+outDir+'/cfg/')
@@ -278,17 +284,29 @@ process.mix.maxBunch = cms.int32(3)
 
   # prepare dir for GSD outputs locally or at EOS
     if (opt.LOCAL):
-        processCmd('mkdir -p '+outDir+'/'+opt.DTIER+'/')
-        recoInputPrefix = 'file:'+currentDir+'/'+outDir+'/'+previousDataTier+'/'
+        if opt.DTIER == 'GRN':
+            processCmd('mkdir -p ' + outDir + '/' + 'GSD' + '/')
+            processCmd('mkdir -p ' + outDir + '/' + 'RECO' + '/')
+            processCmd('mkdir -p ' + outDir + '/' + 'NTUP' + '/')
+            recoInputPrefix = 'file:' + currentDir + '/' + outDir + '/'
+        else:
+            processCmd('mkdir -p '+outDir+'/'+opt.DTIER+'/')
+            recoInputPrefix = 'file:' + currentDir + '/' + outDir + '/' + previousDataTier + '/'
     else:
-        processCmd(eosExec + ' mkdir -p '+opt.eosArea+'/'+outDir+'/'+opt.DTIER+'/');
-        recoInputPrefix = 'root://eoscms.cern.ch/'+opt.eosArea+'/'+outDir+'/'+previousDataTier+'/'
+        if opt.DTIER == 'GRN':
+            processCmd('mkdir -p ' + outDir + '/' + 'GSD' + '/')
+            processCmd('mkdir -p ' + outDir + '/' + 'RECO' + '/')
+            processCmd('mkdir -p ' + outDir + '/' + 'NTUP' + '/')
+            recoInputPrefix = 'root://eoscms.cern.ch/' + opt.eosArea + '/' + outDir + '/'
+        else:
+            processCmd(eosExec + ' mkdir -p '+opt.eosArea+'/'+outDir+'/'+opt.DTIER+'/');
+            recoInputPrefix = 'root://eoscms.cern.ch/' + opt.eosArea + '/' + outDir + '/' + previousDataTier + '/'
     # in case of relval always take reconInput from /store...
     if DASquery: recoInputPrefix=''
 
     # determine number of jobs for GSD, in case of 'RECO'/'NTUP' only get the input GSD/RECO path
 
-    if (opt.DTIER == 'GSD'):
+    if (opt.DTIER == 'GSD' or opt.DTIER == 'GRN'):
         njobs = int(math.ceil(float(opt.NEVTS)/float(opt.EVTSPERJOB)))
     elif (opt.DTIER == 'RECO' or opt.DTIER == 'NTUP'):
         inPath = [opt.eosArea+'/'+opt.inDir, currentDir+'/'+opt.inDir][opt.LOCAL]
@@ -301,10 +319,19 @@ process.mix.maxBunch = cms.int32(3)
     print '[Submitting jobs]'
     jobCount=0
 
-    # read the template file in a single string
-    f_template= open(opt.CONFIGFILE, 'r')
-    template= f_template.read()
-    f_template.close()
+    templates = []
+    # read the template file(s) in a single string(s)
+    if not opt.DTIER == 'GRN':
+        f_template = open(opt.CONFIGFILE, 'r')
+        template = f_template.read()
+        f_template.close()
+    else:
+        config_filenames = ['templates/partGun_GSD_template.py',
+                           'templates/partGun_RECO_template.py',
+                           'templates/partGun_NTUP_template.py']
+        for file in config_filenames:
+            with open(file) as f:
+                templates.append(f.read())
 
     for particle in particles:
         nFilesPerJob = 0
@@ -316,7 +343,7 @@ process.mix.maxBunch = cms.int32(3)
             if len(inputFilesList) == 0:
                 continue
             # build regular expression for splitting (NOTE: none of this is used for relval!)
-            if not DASquery:
+            if not DASquery:#partGun_PDGid211_x2_Pt2.0To100.0_GSD_1.root
                 regex = re.compile(ur"partGun_PDGid[0-9]*[_id[0-9]*]*_x([0-9]*)_(E|Pt)([0-9]*[.]?[0-9]*)To([0-9]*[.]?[0-9]*)_.*\.root")
                 matches = regex.match(inputFilesList[0])
                 eventsPerPrevJob = int(matches.group(1))
@@ -331,78 +358,169 @@ process.mix.maxBunch = cms.int32(3)
 
         for job in range(1,int(njobs)+1):
             submittxt=' for particle ID '+particle
-            if DASquery : submittxt=' for RelVal:'+opt.RELVAL
             print 'Submitting job '+str(job)+' out of '+str(njobs)+submittxt
+            if opt.DTIER == 'GRN':
+                # GSD
+                basename = commonFileNamePrefix + '_PDGid' + "_id".join(sParticle) + '_x' + str(
+                    opt.EVTSPERJOB) + '_' + opt.gunType + str(
+                    opt.thresholdMin) + 'To' + str(opt.thresholdMax) + '_GSD_' + str(job)
 
-            # prepare the out file and cfg file by replacing DUMMY entries according to input options
-            if DASquery:
-                basename=outDir+'_'+opt.DTIER+'_'+str(job)
-            else:
-                basename = commonFileNamePrefix + '_PDGid'+"_id".join(sParticle)+'_x'+str([nFilesPerJob * eventsPerPrevJob, opt.EVTSPERJOB][opt.DTIER=='GSD'])+'_' + opt.gunType+str(opt.thresholdMin)+'To'+str(opt.thresholdMax)+'_'+opt.DTIER+'_'+str(job)
+                cfgfile = basename +'.py'
+                outfile = basename +'.root'
 
-            cfgfile = basename +'.py'
-            outfile = basename +'.root'
+                s_template=templates[0]
 
-            s_template=template
-
-            s_template=s_template.replace('DUMMYFILENAME',outfile)
-            s_template=s_template.replace('DUMMYSEED',str(job))
-
-            if (opt.DTIER == 'GSD'):
-                # first prepare replaces for PU
+                s_template=s_template.replace('DUMMYFILENAME',outfile)
+                s_template=s_template.replace('DUMMYSEED',str(job))
                 if int(opt.PU) == 0:
                     # no PU
-                    mixing='mixNoPU_cfi'
+                    mixing = 'mixNoPU_cfi'
                 else:
-                    mixing='mix_POISSON_average_cfi'
-                    s_template=s_template.replace('#DUMMYPUSECTION',PUSECTION)
-                    s_template=s_template.replace('PUSEED',str(job))
+                    mixing = 'mix_POISSON_average_cfi'
+                    s_template = s_template.replace('#DUMMYPUSECTION', PUSECTION)
+                    s_template = s_template.replace('PUSEED', str(job))
 
                 # in case of InCone generation of particles
                 if opt.InConeID != '':
-                    s_template=s_template.replace('#DUMMYINCONESECTION',InConeSECTION)
+                    s_template = s_template.replace('#DUMMYINCONESECTION', InConeSECTION)
 
                 # prepare GEN-SIM-DIGI inputs
-                nParticles = ','.join([particle for i in range(0,opt.NPART)])
-                s_template=s_template.replace('DUMMYEVTSPERJOB',str(opt.EVTSPERJOB))
+                nParticles = ','.join([particle for i in range(0, opt.NPART)])
+                s_template = s_template.replace('DUMMYEVTSPERJOB', str(opt.EVTSPERJOB))
 
-                s_template=s_template.replace('DUMMYIDs',nParticles)
-                s_template=s_template.replace('DUMMYTHRESHMIN',str(opt.thresholdMin))
-                s_template=s_template.replace('DUMMYTHRESHMAX',str(opt.thresholdMax))
-                s_template=s_template.replace('DUMMYETAMIN',str(opt.etaMin))
-                s_template=s_template.replace('DUMMYETAMAX',str(opt.etaMax))
-                s_template=s_template.replace('GUNPRODUCERTYPE',str(partGunType))
-                s_template=s_template.replace('MAXTHRESHSTRING',"Max"+str(opt.gunType))
-                s_template=s_template.replace('MINTHRESHSTRING',"Min"+str(opt.gunType))
-                s_template=s_template.replace('DUMMYPU',str(mixing))
-                s_template=s_template.replace('GUNMODE',str(opt.gunMode))
+                s_template = s_template.replace('DUMMYIDs', nParticles)
+                s_template = s_template.replace('DUMMYTHRESHMIN', str(opt.thresholdMin))
+                s_template = s_template.replace('DUMMYTHRESHMAX', str(opt.thresholdMax))
+                s_template = s_template.replace('DUMMYETAMIN', str(opt.etaMin))
+                s_template = s_template.replace('DUMMYETAMAX', str(opt.etaMax))
+                s_template = s_template.replace('GUNPRODUCERTYPE', str(partGunType))
+                s_template = s_template.replace('MAXTHRESHSTRING', "Max" + str(opt.gunType))
+                s_template = s_template.replace('MINTHRESHSTRING', "Min" + str(opt.gunType))
+                s_template = s_template.replace('DUMMYPU', str(mixing))
+                s_template = s_template.replace('GUNMODE', str(opt.gunMode))
+                with open(outDir + '/cfg/' + cfgfile, 'w') as f:
+                    f.write(s_template)
+
+                # RECO
+                basename2 = commonFileNamePrefix + '_PDGid' + "_id".join(sParticle) + '_x' + str(
+                    opt.EVTSPERJOB) + '_' + opt.gunType + str(
+                    opt.thresholdMin) + 'To' + str(opt.thresholdMax) + '_RECO_' + str(job)
+
+                cfgfile2 = basename2 +'.py'
+                outfile_reco = basename2 +'.root'
+
+                s_template=templates[1]
+
+                s_template=s_template.replace('DUMMYFILENAME',outfile_reco)
+                s_template=s_template.replace('DUMMYSEED',str(job))
+
+                inputFiles = '"' + recoInputPrefix+"GSD/"+outfile+'"'
+                s_template = s_template.replace('DUMMYINPUTFILELIST', inputFiles)
+                s_template = s_template.replace('DUMMYEVTSPERJOB', str(-1))
+
+                with open(outDir + '/cfg/' + cfgfile2, 'w') as f:
+                    f.write(s_template)
+
+                # NTUP
+                basename3 = commonFileNamePrefix + '_PDGid' + "_id".join(sParticle) + '_x' + str(
+                    opt.EVTSPERJOB) + '_' + opt.gunType + str(
+                    opt.thresholdMin) + 'To' + str(opt.thresholdMax) + '_NTUP_' + str(job)
+
+                cfgfile3 = basename3 +'.py'
+
+                s_template=templates[2]
+
+                s_template=s_template.replace('DUMMYFILENAME',basename3 +'.root')
+                s_template=s_template.replace('DUMMYSEED',str(job))
+
+                inputFiles = '"' + recoInputPrefix+"RECO/"+outfile_reco+'"'
+                s_template = s_template.replace('DUMMYINPUTFILELIST', inputFiles)
+                s_template = s_template.replace('DUMMYEVTSPERJOB', str(-1))
+                s_template = s_template.replace('DUMMYRECLUST', str(opt.RECLUST))
+                s_template = s_template.replace('DUMMYSGO', str(opt.ADDGENORIG))
+                s_template = s_template.replace('DUMMYSGE', str(opt.ADDGENEXTR))
+                s_template = s_template.replace('DUMMYSPFC', str(opt.storePFCandidates))
+
+                with open(outDir + '/cfg/' + cfgfile3, 'w') as f:
+                    f.write(s_template)
+
+                # The command
+                cmd = 'bsub -o '+outDir+'/std/'+basename +'.out -e '+outDir+'/std/'+basename +'.err -q '+opt.QUEUE+' -J '+basename+' "SubmitFileGRN.sh '+currentDir+' '+outDir+' '+cfgfile+' '+cfgfile2+' '+cfgfile3+' '+str(opt.LOCAL)+' '+CMSSW_VERSION+' '+CMSSW_BASE+' '+SCRAM_ARCH+' '+opt.eosArea+' '+opt.DTIER+'"'
 
 
-            elif (opt.DTIER == 'RECO' or opt.DTIER == 'NTUP'):
-                # prepare RECO inputs
-                inputFilesListPerJob = inputFilesList[(job-1)*nFilesPerJob:(job)*nFilesPerJob]
-                if len(inputFilesListPerJob)==0: continue
-                inputFiles = '"' + '", "'.join([recoInputPrefix+str(f) for f in inputFilesListPerJob]) + '"'
-                s_template=s_template.replace('DUMMYINPUTFILELIST',inputFiles)
-                s_template=s_template.replace('DUMMYEVTSPERJOB',str(-1))
+            else:
+                if DASquery :
+                    submittxt=' for RelVal:'+opt.RELVAL
+
+                # prepare the out file and cfg file by replacing DUMMY entries according to input options
+                if DASquery:
+                    basename=outDir+'_'+opt.DTIER+'_'+str(job)
+                else:
+                    basename = commonFileNamePrefix + '_PDGid'+"_id".join(sParticle)+'_x'+str([nFilesPerJob * eventsPerPrevJob, opt.EVTSPERJOB][opt.DTIER=='GSD'])+'_' + opt.gunType+str(opt.thresholdMin)+'To'+str(opt.thresholdMax)+'_'+opt.DTIER+'_'+str(job)
+
+                cfgfile = basename +'.py'
+                outfile = basename +'.root'
+
+                s_template=template
+
+                s_template=s_template.replace('DUMMYFILENAME',outfile)
+                s_template=s_template.replace('DUMMYSEED',str(job))
+
+                if (opt.DTIER == 'GSD'):
+                    # first prepare replaces for PU
+                    if int(opt.PU) == 0:
+                        # no PU
+                        mixing='mixNoPU_cfi'
+                    else:
+                        mixing='mix_POISSON_average_cfi'
+                        s_template=s_template.replace('#DUMMYPUSECTION',PUSECTION)
+                        s_template=s_template.replace('PUSEED',str(job))
+
+                    # in case of InCone generation of particles
+                    if opt.InConeID != '':
+                        s_template=s_template.replace('#DUMMYINCONESECTION',InConeSECTION)
+
+                    # prepare GEN-SIM-DIGI inputs
+                    nParticles = ','.join([particle for i in range(0,opt.NPART)])
+                    s_template=s_template.replace('DUMMYEVTSPERJOB',str(opt.EVTSPERJOB))
+
+                    s_template=s_template.replace('DUMMYIDs',nParticles)
+                    s_template=s_template.replace('DUMMYTHRESHMIN',str(opt.thresholdMin))
+                    s_template=s_template.replace('DUMMYTHRESHMAX',str(opt.thresholdMax))
+                    s_template=s_template.replace('DUMMYETAMIN',str(opt.etaMin))
+                    s_template=s_template.replace('DUMMYETAMAX',str(opt.etaMax))
+                    s_template=s_template.replace('GUNPRODUCERTYPE',str(partGunType))
+                    s_template=s_template.replace('MAXTHRESHSTRING',"Max"+str(opt.gunType))
+                    s_template=s_template.replace('MINTHRESHSTRING',"Min"+str(opt.gunType))
+                    s_template=s_template.replace('DUMMYPU',str(mixing))
+                    s_template=s_template.replace('GUNMODE',str(opt.gunMode))
+
+
+                elif (opt.DTIER == 'RECO' or opt.DTIER == 'NTUP'):
+                    # prepare RECO inputs
+                    inputFilesListPerJob = inputFilesList[(job-1)*nFilesPerJob:(job)*nFilesPerJob]
+                    if len(inputFilesListPerJob)==0: continue
+                    inputFiles = '"' + '", "'.join([recoInputPrefix+str(f) for f in inputFilesListPerJob]) + '"'
+                    s_template=s_template.replace('DUMMYINPUTFILELIST',inputFiles)
+                    s_template=s_template.replace('DUMMYEVTSPERJOB',str(-1))
 
 
 
-            if (opt.DTIER == 'NTUP'):
-                s_template=s_template.replace('DUMMYRECLUST',str(opt.RECLUST))
-                s_template=s_template.replace('DUMMYSGO',str(opt.ADDGENORIG))
-                s_template=s_template.replace('DUMMYSGE',str(opt.ADDGENEXTR))
-                s_template=s_template.replace('DUMMYSPFC',str(opt.storePFCandidates))
+                if (opt.DTIER == 'NTUP'):
+                    s_template=s_template.replace('DUMMYRECLUST',str(opt.RECLUST))
+                    s_template=s_template.replace('DUMMYSGO',str(opt.ADDGENORIG))
+                    s_template=s_template.replace('DUMMYSGE',str(opt.ADDGENEXTR))
+                    s_template=s_template.replace('DUMMYSPFC',str(opt.storePFCandidates))
 
-            # submit job
-            # now write the file from the s_template
+                # submit job
+                # now write the file from the s_template
 
-            write_template= open(outDir+'/cfg/'+cfgfile, 'w')
-            write_template.write(s_template)
-            write_template.close()
+                write_template= open(outDir+'/cfg/'+cfgfile, 'w')
+                write_template.write(s_template)
+                write_template.close()
 
 
-            cmd = 'bsub -o '+outDir+'/std/'+basename +'.out -e '+outDir+'/std/'+basename +'.err -q '+opt.QUEUE+' -J '+basename+' "SubmitFileGSD.sh '+currentDir+' '+outDir+' '+cfgfile+' '+str(opt.LOCAL)+' '+CMSSW_VERSION+' '+CMSSW_BASE+' '+SCRAM_ARCH+' '+opt.eosArea+' '+opt.DTIER+'"'
+                cmd = 'bsub -o '+outDir+'/std/'+basename +'.out -e '+outDir+'/std/'+basename +'.err -q '+opt.QUEUE+' -J '+basename+' "SubmitFileGSD.sh '+currentDir+' '+outDir+' '+cfgfile+' '+str(opt.LOCAL)+' '+CMSSW_VERSION+' '+CMSSW_BASE+' '+SCRAM_ARCH+' '+opt.eosArea+' '+opt.DTIER+'"'
 
             #TODO This could probably be better handled by a job array
             #Example: bsub -J "foo[1-3]" -oo "foo.%I.out" -eo "foo.%I.err" -q 8nm "sleep 1"
@@ -425,4 +543,5 @@ process.mix.maxBunch = cms.int32(3)
 
 ### run the submitHGCalProduction() as main
 if __name__ == "__main__":
+    print "Test"
     submitHGCalProduction()
