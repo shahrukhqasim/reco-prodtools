@@ -114,8 +114,8 @@ def parseOptions():
 
     # sanity check on PU
     if int(opt.PU) !=0:
-        if opt.DTIER != 'GSD':
-            parser.error('PU simulation not supported for ' + opt.DTIER + '. Exiting...')
+        if not (opt.DTIER == 'GSD' or opt.DTIER == 'GRN'):
+            parser.error('PU simulation not supported for ' + opt.DTIER + '. Exiting... why?')
             sys.exit(1)
         if opt.PUDS == '':
             parser.error('PU simulation requested you need to specify a dataset (--PUDS). Exiting...')
@@ -294,9 +294,9 @@ process.mix.maxBunch = cms.int32(3)
             recoInputPrefix = 'file:' + currentDir + '/' + outDir + '/' + previousDataTier + '/'
     else:
         if opt.DTIER == 'GRN':
-            processCmd('mkdir -p ' + outDir + '/' + 'GSD' + '/')
-            processCmd('mkdir -p ' + outDir + '/' + 'RECO' + '/')
-            processCmd('mkdir -p ' + outDir + '/' + 'NTUP' + '/')
+            processCmd('mkdir -p ' + opt.eosArea  + '/' + outDir + '/' + 'GSD' + '/')
+            processCmd('mkdir -p ' + opt.eosArea  + '/' + outDir + '/' + 'RECO' + '/')
+            processCmd('mkdir -p ' + opt.eosArea  + '/' + outDir + '/' + 'NTUP' + '/')
             recoInputPrefix = 'root://eoscms.cern.ch/' + opt.eosArea + '/' + outDir + '/'
         else:
             processCmd(eosExec + ' mkdir -p '+opt.eosArea+'/'+outDir+'/'+opt.DTIER+'/');
